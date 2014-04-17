@@ -63,6 +63,7 @@
           *transient-border-width*
           *normal-border-width*
           *text-color*
+          *grab-pointer-timeout*
           *window-events*
           *window-parent-events*
           *message-window-padding*
@@ -303,6 +304,11 @@ the mode-line, the button clicked, and the x and y of the pointer.")
 
 (defvar *menu-scrolling-step* 1
   "Number of lines to scroll when hitting the menu list limit.")
+
+;; Input defaults
+(defvar *grab-pointer-timeout* 7
+  "Seconds pointer could be left grabbed.")
+
 
 (defparameter +netwm-supported+
   '(:_NET_SUPPORTING_WM_CHECK
