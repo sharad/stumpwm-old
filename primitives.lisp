@@ -57,6 +57,8 @@
           *new-mode-line-hook*
           *destroy-mode-line-hook*
           *mode-line-click-hook*
+          *pre-command-hook*
+          *post-command-hook*
           *display*
           *shell-program*
           *maxsize-border-width*
@@ -121,6 +123,7 @@
           concat
           data-dir-file
           dformat
+          flatten
           define-frame-preference
           redirect-all-output
           remove-hook
@@ -129,9 +132,42 @@
           command-mode-start-message
           command-mode-end-message
           split-string
-	  with-restarts-menu
+          with-restarts-menu
           with-data-file
-	  move-to-head))
+          move-to-head
+          format-expand
+
+          ;; Frame accessors
+          frame-x
+          frame-y
+          frame-width
+          frame-height
+
+          ;; Screen accessors
+          screen-heads
+          screen-root
+          screen-focus
+          screen-float-focus-color
+          screen-float-unfocus-color
+
+          ;; Window states
+          +withdrawn-state+
+          +normal-state+
+          +iconic-state+
+
+          ;; Modifiers
+          modifiers
+          modifiers-p
+          modifiers-alt
+          modifiers-altgr
+          modifiers-super
+          modifiers-meta
+          modifiers-hyper
+          modifiers-numlock
+          ;; Conditions
+          stumpwm-condition
+          stumpwm-error
+          stumpwm-warning))
 
 
 ;;; Message Timer
@@ -277,6 +313,14 @@ the mode-line")
   "Called whenever the mode-line is clicked. It is called with 4 arguments,
 the mode-line, the button clicked, and the x and y of the pointer.")
 
+(defvar *pre-command-hook* '()
+  "Called before a command is called. It is called with 1 argument:
+the command as a symbol.")
+
+(defvar *post-command-hook* '()
+  "Called after a command is called. It is called with 1 argument:
+the command as a symbol.")
+
 ;; Data types and globals used by stumpwm
 
 (defvar *display* nil
@@ -376,6 +420,10 @@ are valid values.
 @item :bottom-left
 @item :bottom-right
 @item :center
+@item :top
+@item :left
+@item :right
+@item :bottom
 @end table")
 
 ;; line editor
@@ -391,6 +439,10 @@ are valid values.
 @item :bottom-left
 @item :bottom-right
 @item :center
+@item :top
+@item :left
+@item :right
+@item :bottom
 @end table")
 
 ;; default values. use the set-* functions to these attributes
@@ -398,7 +450,7 @@ are valid values.
 (defparameter +default-background-color+ "Black")
 (defparameter +default-window-background-color+ "Black")
 (defparameter +default-border-color+ "White")
-(defparameter +default-font-name+ "9x15bold")
+(defparameter +default-font-name+ "9x15")
 (defparameter +default-focus-color+ "White")
 (defparameter +default-unfocus-color+ "Black")
 (defparameter +default-float-focus-color+ "Orange")
@@ -419,7 +471,7 @@ and to *standard-output*.
 Valid values are :message, :break, :abort. :break will break to the
 debugger. This can be problematic because if the user hit's a
 mapped key the ENTIRE keyboard will be frozen and you will have
-to login remotely to regain control. :abort quits stumpmwm.")
+to login remotely to regain control. :abort quits stumpwm.")
 
 (defvar *window-name-source* :title
   "This variable controls what is used for the window's name. The default is @code{:title}.
@@ -469,7 +521,7 @@ Use the window's resource name.
    (float-unfocus-color :initform nil :accessor screen-float-unfocus-color)
    (msg-border-width :initform nil :accessor screen-msg-border-width)
    (frame-outline-width :initform nil :accessor screen-frame-outline-width)
-   (font :initform nil :accessor screen-font)
+   (fonts :initform '(nil) :accessor screen-fonts)
    (mapped-windows :initform nil :accessor screen-mapped-windows :documentation
     "A list of all mapped windows. These are the raw xlib:window's. window structures are stored in groups.")
    (withdrawn-windows :initform nil :accessor screen-withdrawn-windows :documentation
@@ -504,12 +556,19 @@ exist, in which case they go into the current group.")
    (last-msg-highlights :initform nil :accessor screen-last-msg-highlights)))
 
 (defstruct ccontext
+  screen
   win
   px
   gc
   default-fg
   default-bright
-  default-bg)
+  default-bg
+  fg
+  bg
+  brightp
+  reversep
+  color-stack
+  font)
 
 (defun screen-message-window (screen)
   (ccontext-win (screen-message-cc screen)))
@@ -519,6 +578,9 @@ exist, in which case they go into the current group.")
 
 (defun screen-message-gc (screen)
   (ccontext-gc (screen-message-cc screen)))
+
+(defun screen-font (screen)
+  (first (screen-fonts screen)))
 
 (defmethod print-object ((object frame) stream)
   (format stream "#S(frame ~d ~a ~d ~d ~d ~d)"
@@ -542,10 +604,11 @@ supported. By default, the frame labels are the 36 (lower-case)
 alphanumeric characters, starting with numbers 0-9.")
 
 (defun get-frame-number-translation (frame)
-  "Given a frame return its number translation using *frame-number-map* as a char."
+  "Given a frame return its number translation using *frame-number-map* as a
+char."
   (let ((num (frame-number frame)))
-    (or (and (< num (length *frame-number-map*))
-             (char *frame-number-map* num))
+    (if (< num (length *frame-number-map*))
+        (char *frame-number-map* num)
         ;; translate the frame number to a char. FIXME: it loops after 9
         (char (prin1-to-string num) 0))))
 
@@ -582,7 +645,7 @@ loads the rc file.")
 
 (defvar *interactivep* nil
   "True when a defcommand is executed from colon or a keybinding")
- 
+
 ;;; The restarts menu macro
 
 (defmacro with-restarts-menu (&body body)
@@ -622,7 +685,7 @@ display a message whenever you switch frames:
 \(defun my-rad-fn (to-frame from-frame)
   (stumpwm:message \"Mustard!\"))
 
-\(stumpmwm:add-hook stumpwm:*focus-frame-hook* 'my-rad-fn)
+\(stumpwm:add-hook stumpwm:*focus-frame-hook* 'my-rad-fn)
 @end example"
   `(setf ,hook (adjoin ,fn ,hook)))
 
@@ -720,6 +783,17 @@ at the end of STRING, we don't include a null substring for that.
 Modifies the match data; use `save-match-data' if necessary."
   (split-seq string separators :test #'char= :default-value '("")))
 
+(defun match-all-regexps (regexps target-string &key (case-insensitive t))
+  "Return T if TARGET-STRING matches all regexps in REGEXPS.
+REGEXPS can be a list of strings (one regexp per element) or a single
+string which is split to obtain the individual regexps. "
+  (let* ((regexps (if (listp regexps)
+                      regexps
+                      (split-string regexps " "))))
+    (loop for pattern in regexps
+       always (let ((scanner (ppcre:create-scanner pattern
+                                                   :case-insensitive-mode case-insensitive)))
+                (ppcre:scan scanner target-string)))))
 
 (defun insert-before (list item nth)
   "Insert ITEM before the NTH element of LIST."
@@ -759,7 +833,7 @@ before reopening.")
 
 (defun redirect-all-output (file)
   "Elect to redirect all output to the specified file. For instance,
-if you want everything to go to ~/stumpwm.d/debug-output.txt you would
+if you want everything to go to ~/.stumpwm.d/debug-output.txt you would
 do:
 
 @example
@@ -853,7 +927,12 @@ size. For instance, @samp{%20t} crops the window's title to 20
 characters.")
 
 (defvar *window-info-format* "%wx%h %n (%t)"
-  "The format used in the info command. @xref{*window-format*} for formatting details.")
+  "The format used in the info command.
+  @var{*window-format*} for formatting details.")
+
+(defparameter *window-format-by-class* "%m%n %c %s%50t"
+  "The format used in the info winlist-by-class command.
+ @var{*window-format*} for formatting details.")
 
 (defvar *group-formatters* '((#\n group-map-number)
                              (#\s fmt-group-status)
@@ -889,8 +968,8 @@ The group's name.
 ;;      (font-ascent font)))
 
 (defvar *x-selection* nil
-  "This holds stumpwm's current selection. It is generally set
-when killing text in the input bar.")
+  "This is a plist of stumpwm's current selections. The different properties are
+generally set when killing text in the input bar.")
 
 (defvar *last-command* nil
   "Set to the last interactive command run.")
@@ -944,6 +1023,11 @@ raise/map denial messages will be seen.")
                   (apply 'window-matches-properties-p window props))
                 deny-list)
        t)))
+
+(defun flatten (list)
+  "Flatten LIST"
+  (labels ( (mklist (x) (if (listp x) x (list x))) )
+    (mapcan #'(lambda (x) (if (atom x) (mklist x) (flatten x))) list)))
 
 (defun list-splice-replace (item list &rest replacements)
   "splice REPLACEMENTS into LIST where ITEM is, removing
@@ -1088,7 +1172,7 @@ input focus is transfered to the window you click on.")
 
 (defvar *root-click-focuses-frame* t
   "Set to NIL if you don't want clicking the root window to focus the frame
-  containing the pointer when *mouse-focus-policy* is :click.")
+  containing the pointer.")
 
 (defvar *banish-pointer-to* :head
   "Where to put the pointer when no argument is given to (banish-pointer) or the banish
@@ -1158,7 +1242,7 @@ of :error."
   (declare (ignorable if-exists))
   `(progn
      (ensure-directories-exist *data-dir*)
-     (with-open-file (,s ,(merge-pathnames *data-dir* file)
+     (with-open-file (,s ,(merge-pathnames file *data-dir*)
                          ,@keys)
        ,@body)))
 
@@ -1168,8 +1252,20 @@ of :error."
     (setf ,list (remove ,elt ,list))
     (push ,elt ,list)))
 
-(define-condition stumpwm-error (error)
-  () (:documentation "Any stumpwm specific error should inherit this."))
+(define-condition stumpwm-condition (condition)
+  ((message :initarg :message :reader warning-message))
+  (:documentation "Any stumpmwm specific condition should inherit from this.")
+  (:report (lambda (condition stream)
+            (format stream "~A~%" (warning-message condition)))))
+
+(define-condition stumpwm-error (stumpwm-condition error)
+  ()
+  (:documentation "Any stumpwm specific error should inherit this."))
+
+(define-condition stumpwm-warning (warning stumpwm-condition)
+  ()
+  (:documentation "Adds a message slot to warning. Any stumpwm specific warning
+  should inherit from this."))
 
 (defun intern1 (thing &optional (package *package*) (rt *readtable*))
   "A DWIM intern."
