@@ -73,14 +73,6 @@
       (when (has-bw value-mask)
         (setf (xlib:drawable-border-width xwin) border-width)))))
 
-(defun update-configuration (win)
-  ;; Send a synthetic configure-notify event so that the window
-  ;; knows where it is onscreen.
-  (xwin-send-configuration-notify (window-xwin win)
-                                  (xlib:drawable-x (window-parent win))
-                                  (xlib:drawable-y (window-parent win))
-                                  (window-width win) (window-height win) 0))
-
 (define-stump-event-handler :configure-request (stack-mode #|parent|# window #|above-sibling|# x y width height border-width value-mask)
   (labels ((has-x () (= 1 (logand value-mask 1)))
            (has-y () (= 2 (logand value-mask 2)))
@@ -125,10 +117,7 @@
             (t
              (dformat 1 "Updating Xinerama configuration for ~S.~%" screen)
              (if new-heads
-                 (progn
-                   (scale-screen screen new-heads)
-                   (mapc 'group-sync-all-heads (screen-groups screen))
-                   (update-mode-lines screen))
+                 (head-force-refresh screen new-heads)
                  (dformat 1 "Invalid configuration! ~S~%" new-heads)))))))))
 
 (define-stump-event-handler :map-request (parent send-event-p window)
@@ -158,8 +147,9 @@
          ;; anyway.
          t)
         (t
-         (let ((window (process-mapped-window screen window)))
-           (group-raise-request (window-group window) window :map)))))))
+         (xlib:with-server-grabbed (*display*)
+           (let ((window (process-mapped-window screen window)))
+             (group-raise-request (window-group window) window :map))))))))
 
 (define-stump-event-handler :unmap-notify (send-event-p event-window window #|configure-p|#)
   ;; There are two kinds of unmap notify events: the straight up
@@ -409,8 +399,8 @@ converted to an atom is removed."
 (define-stump-event-handler :selection-request (requestor property selection target time)
   (send-selection requestor property selection target time))
 
-(define-stump-event-handler :selection-clear ()
-  (setf *x-selection* nil))
+(define-stump-event-handler :selection-clear (selection)
+  (setf (getf *x-selection* selection) nil))
 
 (defun find-message-window-screen (win)
   "Return the screen, if any, that message window WIN belongs."
@@ -573,6 +563,13 @@ converted to an atom is removed."
 (define-stump-event-handler :focus-out (window mode kind)
   (dformat 5 "~@{~s ~}~%" window mode kind))
 
+(define-stump-event-handler :focus-in (window mode kind)
+  (let ((win (find-window window)))
+    (when (and win (eq mode :normal) (not (eq kind :pointer)))
+      (let ((screen (window-screen win)))
+        (unless (eq win (screen-focus screen))
+          (setf (screen-focus screen) win))))))
+
 ;;; Mouse focus
 
 (defun focus-all (win)
@@ -593,8 +590,6 @@ the window in it's frame."
         (update-all-mode-lines)))))
 
 (define-stump-event-handler :button-press (window code x y child time)
-  ;; Pass click to client
-  (xlib:allow-events *display* :replay-pointer time)
   (let (screen ml win)
     (cond
       ((and (setf screen (find-screen window)) (not child))
@@ -603,7 +598,9 @@ the window in it's frame."
       ((setf ml (find-mode-line-window window))
        (run-hook-with-args *mode-line-click-hook* ml code x y))
       ((setf win (find-window-by-parent window (top-windows)))
-       (group-button-press (window-group win) x y win)))))
+       (group-button-press (window-group win) x y win))))
+  ;; Pass click to client
+  (xlib:allow-events *display* :replay-pointer time))
 
 ;; Handling event :KEY-PRESS
 ;; (:DISPLAY #<XLIB:DISPLAY :0 (The X.Org Foundation R60700000)> :EVENT-KEY :KEY-PRESS :EVENT-CODE 2 :SEND-EVENT-P NIL :CODE 45 :SEQUENCE 1419 :TIME 98761213 :ROOT #<XLIB:WINDOW :0 96> :WINDOW #<XLIB:WINDOW :0 6291484> :EVENT-WINDOW #<XLIB:WINDOW :0 6291484> :CHILD
