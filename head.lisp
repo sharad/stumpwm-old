@@ -40,22 +40,28 @@
                                 (parse-error ()
                                   nil))))
 
+(defun list-heads ()
+  "Return a list of HEAD structures without duplicates"
+  (delete-duplicates
+   (loop for line in (split-string (run-shell-command "xdpyinfo -ext XINERAMA" t))
+         for head = (parse-xinerama-head line)
+         when head
+           collect head)
+   :test #'frames-overlap-p))
+
+(defun number-heads (heads)
+  "Number each head according to its position in the list."
+  (loop for head in heads
+        for i upfrom 0
+        do (setf (head-number head) i)
+        finally (return heads)))
+
 (defun make-screen-heads (screen root)
   "or use xdpyinfo to query the xinerama extension, if it's enabled."
   (or (and (xlib:query-extension *display* "XINERAMA")
            (with-current-screen screen
              ;; Ignore 'clone' heads.
-             (loop
-                for i = 0 then (1+ i)
-                for h in
-                (delete-duplicates
-                 (loop for i in (split-string (run-shell-command "xdpyinfo -ext XINERAMA" t))
-                    for head = (parse-xinerama-head i)
-                    when head
-                    collect head)
-                 :test #'frames-overlap-p)
-                do (setf (head-number h) i)
-                collect h)))
+             (number-heads (list-heads))))
       (list (make-head :number 0
                        :x 0 :y 0
                        :width (xlib:drawable-width root)
@@ -121,8 +127,9 @@
 
 (defun remove-head (screen head)
   (dformat 1 "Removing head #~D~%" (head-number head))
-  (when (head-mode-line head)
-    (toggle-mode-line screen head))
+  (let ((mode-line (head-mode-line head)))
+    (when mode-line
+      (destroy-mode-line mode-line)))
   (dolist (group (screen-groups screen))
     (group-remove-head group head))
   ;; Remove it from SCREEN's head list.
@@ -158,8 +165,7 @@
 
 (defun head-force-refresh (screen new-heads)
   (scale-screen screen new-heads)    
-  (mapc 'group-sync-all-heads (screen-groups screen))
-  (update-mode-lines screen))
+  (mapc 'group-sync-all-heads (screen-groups screen)))
 
 (defcommand refresh-heads (&optional (screen (current-screen))) ()
   "Refresh screens in case a monitor was connected, but a

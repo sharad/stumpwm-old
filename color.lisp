@@ -325,34 +325,34 @@ rendered width."
                     string-or-parts))
          (height (max-font-height parts cc)))
     (loop
-      for (part . rest) on parts
-      for font-height-difference = (- height
-                                      (font-height (ccontext-font cc)))
-      for y-to-center = (floor (/ font-height-difference 2))
-      if (stringp part)
-        do (draw-image-glyphs
-            (ccontext-px cc)
-            (ccontext-gc cc)
-            (ccontext-font cc)
-            draw-x (+ y y-to-center (font-ascent (ccontext-font cc)))
-            part
-            :translate #'translate-id
-            :size 16)
-        and do (incf draw-x (text-line-width (ccontext-font cc)
-                                        part
-                                        :translate #'translate-id))
-      else
-        do (if (eq :> (first part))
-               (progn (render-string rest cc
-                                     (- (xlib:drawable-width (ccontext-px cc))
-                                        x
-                                        (rendered-string-size rest cc))
-                                     y)
-                      (loop-finish))
-               (apply #'apply-color cc (first part) (rest part))))
+       for (part . rest) on parts
+       for font-height-difference = (- height
+                                       (font-height (ccontext-font cc)))
+       for y-to-center = (floor (/ font-height-difference 2))
+       if (stringp part)
+       do (draw-image-glyphs
+           (ccontext-px cc)
+           (ccontext-gc cc)
+           (ccontext-font cc)
+           draw-x (+ y y-to-center (font-ascent (ccontext-font cc)))
+           part
+           :translate #'translate-id
+           :size 16)
+         (incf draw-x (text-line-width (ccontext-font cc)
+                                       part
+                                       :translate #'translate-id))
+       else
+       do (if (eq :> (first part))
+              (progn (render-string rest cc
+                                    (- (xlib:drawable-width (ccontext-px cc))
+                                       x
+                                       (rendered-string-size rest cc))
+                                    y)
+                     (loop-finish))
+              (apply #'apply-color cc (first part) (rest part))))
     (values height draw-x)))
 
-(defun render-strings (screen cc padx pady strings highlights)
+(defun render-strings (cc padx pady strings highlights)
   (let* ((gc (ccontext-gc cc))
          (xwin (ccontext-win cc))
          (px (ccontext-px cc))
@@ -379,15 +379,22 @@ rendered width."
                            (xlib:drawable-width px)
                            (xlib:drawable-height px) t))
     (loop for parts in strings
-          for row from 0 to (length strings)
-          for line-height = (render-string parts cc
-                                           (+ padx 0)
-                                           (+ pady y))
-          when (find row highlights :test 'eql)
-            do (invert-rect screen px 0 (+ pady y)
-                            (xlib:drawable-width px)
-                            line-height)
-          do (incf y line-height))
+       for row from 0 to (length strings)
+       for line-height = (max-font-height parts cc)
+       if (find row highlights :test 'eql)
+       do (xlib:draw-rectangle px gc 0 y (xlib:drawable-width px) line-height t)
+         (xlib:with-gcontext (gc :foreground (xlib:gcontext-background gc)
+                                 :background (xlib:gcontext-foreground gc))
+           ;; If we don't switch the default colors, a color operation
+           ;; resetting either color to its default value would undo the
+           ;; switch.
+           (rotatef (ccontext-default-fg cc) (ccontext-default-bg cc))
+           (render-string parts cc (+ padx 0) (+ pady y))
+           (rotatef (ccontext-default-fg cc) (ccontext-default-bg cc)))
+       else
+       do (render-string parts cc (+ padx 0) (+ pady y))
+       end
+       do (incf y line-height))
     (xlib:copy-area px gc 0 0
                     (xlib:drawable-width px)
                     (xlib:drawable-height px) xwin 0 0)
