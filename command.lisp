@@ -120,32 +120,32 @@ when missing.
 Alternatively, instead of specifying nil for PROMPT or leaving it
 out, an element can just be the argument type."
   (check-type name (or symbol list))
-  (let ((docstring (if (stringp (first body))
-                     (first body)
-                     (warn (make-condition 'command-docstring-warning :command name))))
-        (body (if (stringp (first body))
-                  (cdr body) body))
-        (name (if (atom name)
-                  name
-                  (first name)))
-        (group (if (atom name)
-                   t
-                   (second name))))
-  `(progn
-     (defun ,name ,args
-       ,docstring
-       (let ((%interactivep% *interactivep*)
-             (*interactivep* nil))
-         (declare (ignorable %interactivep%))
-         (run-hook-with-args *pre-command-hook* ',name)
-         (multiple-value-prog1
-             (progn ,@body)
-           (run-hook-with-args *post-command-hook* ',name))))
-     (export ',name)
-     (setf (gethash ',name *command-hash*)
-           (make-command :name ',name
-                         :class ',group
-                         :args ',interactive-args)))))
+  (multiple-value-bind (body decls docstring) (parse-body body :documentation t)
+    (let ((name (if (atom name)
+                    name
+                    (first name)))
+          (group (if (atom name)
+                     t
+                     (second name))))
+      (unless docstring
+        (make-condition 'command-docstring-warning :command name))
+      `(progn
+         (defun ,name ,args
+           ,@(when docstring
+               (list docstring))
+           ,@decls
+           (let ((%interactivep% *interactivep*)
+                 (*interactivep* nil))
+             (declare (ignorable %interactivep%))
+             (run-hook-with-args *pre-command-hook* ',name)
+             (multiple-value-prog1
+                 (progn ,@body)
+               (run-hook-with-args *post-command-hook* ',name))))
+         (export ',name)
+         (setf (gethash ',name *command-hash*)
+               (make-command :name ',name
+                             :class ',group
+                             :args ',interactive-args))))))
 
 (defmacro define-stumpwm-command (name (&rest args) &body body)
   "Deprecated. use `defcommand' instead."
@@ -300,8 +300,7 @@ then describes the symbol."
 (define-stumpwm-type :y-or-n (input prompt)
   (let ((s (or (argument-pop input)
                (read-one-line (current-screen) (concat prompt "(y/n): ")))))
-    (when s
-      (values (list (equal s "y"))))))
+    (equal s "y")))
 
 (defun lookup-symbol (string)
   ;; FIXME: should we really use string-upcase?
@@ -443,19 +442,20 @@ then describes the symbol."
 
 (define-stumpwm-type :frame (input prompt)
   (declare (ignore prompt))
-  (let ((arg (argument-pop input)))
-    (if arg
-        (or (find arg (group-frames (current-group))
-                  :key (lambda (f)
-                         (string (get-frame-number-translation f)))
-                  :test 'string=)
-            (throw 'error "Frame not found."))
-        (or (choose-frame-by-number (current-group))
-            (throw 'error :abort)))))
+  (if-let ((arg (argument-pop input)))
+    (or (find arg (group-frames (current-group))
+              :key (lambda (f)
+                     (string (get-frame-number-translation f)))
+              :test 'string=)
+        (throw 'error "Frame not found."))
+    (or (choose-frame-by-number (current-group))
+        (throw 'error :abort))))
 
 (define-stumpwm-type :shell (input prompt)
-  (or (argument-pop-rest input)
-      (completing-read (current-screen) prompt 'complete-program)))
+  (declare (ignore prompt))
+  (let ((prompt (format nil "~A -c " *shell-program*)))
+    (or (argument-pop-rest input)
+        (completing-read (current-screen) prompt 'complete-program))))
 
 (define-stumpwm-type :rest (input prompt)
   (or (argument-pop-rest input)
