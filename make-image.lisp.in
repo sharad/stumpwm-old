@@ -1,3 +1,4 @@
+
 #-(or sbcl clisp openmcl ecl (and lispworks6 (not lispworks-personal-edition)))
 (error "This lisp implementation is not supported.")
 
@@ -32,7 +33,7 @@
 (asdf:oos 'asdf:load-op 'in.net.sharad.pa-frontend-stumpwm)
 (asdf:oos 'asdf:load-op 'stumpwm)
 
-#-ecl (stumpwm:set-module-dir "@MODULE_DIR@")
+;; #-ecl (stumpwm:set-module-dir "@MODULE_DIR@")
 
 (when (uiop:version<= "3.1.5" (asdf:asdf-version))
   ;; We register StumpWM and its dependencies as immutable, to stop ASDF from
@@ -64,7 +65,7 @@
                  :move-here "."
                  :name-suffix ""
                  :epilogue-code '(progn
-                                  (stumpwm:set-module-dir "@MODULE_DIR@")
+                                  ;; (stumpwm:set-module-dir "@MODULE_DIR@")
                                   (stumpwm:stumpwm)))
 
 ;;; if you want to save an image
